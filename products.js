@@ -132,24 +132,36 @@ function makeVariantId(productId, scent, size) {
   return `${productId}-${slugify(scent)}-${slugify(size)}`;
 }
 
-const adminTokens = new Map();
 const TOKEN_TTL = 24 * 60 * 60 * 1000;
+const TOKEN_VERSION = 'v1';
+
+function getTokenSecret() {
+  return process.env.ADMIN_PASSWORD || null;
+}
 
 function createToken() {
-  const token = crypto.randomBytes(32).toString('hex');
-  adminTokens.set(token, Date.now() + TOKEN_TTL);
-  return token;
+  const secret = getTokenSecret();
+  if (!secret) throw new Error('Admin parol sozlanmagan');
+  const exp = Date.now() + TOKEN_TTL;
+  const payload = `${TOKEN_VERSION}.${exp}`;
+  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  return `${payload}.${sig}`;
 }
 
 function verifyToken(token) {
-  if (!token) return false;
-  const expires = adminTokens.get(token);
-  if (!expires) return false;
-  if (Date.now() > expires) {
-    adminTokens.delete(token);
-    return false;
-  }
-  return true;
+  if (!token || typeof token !== 'string') return false;
+  const secret = getTokenSecret();
+  if (!secret) return false;
+
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== TOKEN_VERSION) return false;
+
+  const payload = `${parts[0]}.${parts[1]}`;
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  if (parts[2] !== expected) return false;
+
+  const exp = Number(parts[1]);
+  return Number.isFinite(exp) && Date.now() <= exp;
 }
 
 function authMiddleware(req, res, next) {
