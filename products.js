@@ -35,6 +35,62 @@ async function readProducts() {
   return rows.map(mapProduct);
 }
 
+async function upsertProductRow(client, p) {
+  await client.query(
+    `INSERT INTO products (id, name, brand, category, sizes, variants, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       brand = EXCLUDED.brand,
+       category = EXCLUDED.category,
+       sizes = EXCLUDED.sizes,
+       variants = EXCLUDED.variants,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      p.id,
+      p.name,
+      p.brand || '',
+      p.category || '',
+      JSON.stringify(p.sizes || []),
+      JSON.stringify(p.variants || []),
+      new Date().toISOString(),
+    ]
+  );
+}
+
+async function readProductById(id) {
+  const { rows } = await getPool().query(
+    'SELECT id, name, brand, category, sizes, variants FROM products WHERE id = $1',
+    [id]
+  );
+  return rows[0] ? mapProduct(rows[0]) : null;
+}
+
+async function getNextProductId() {
+  const { rows } = await getPool().query('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM products');
+  return rows[0].next_id;
+}
+
+async function upsertProduct(product) {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await upsertProductRow(client, product);
+    await client.query('COMMIT');
+    return product;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteProductById(id) {
+  const { rowCount } = await getPool().query('DELETE FROM products WHERE id = $1', [id]);
+  return rowCount > 0;
+}
+
 async function writeProducts(products) {
   const client = await getPool().connect();
   try {
@@ -49,26 +105,7 @@ async function writeProducts(products) {
     }
 
     for (const p of products) {
-      await client.query(
-        `INSERT INTO products (id, name, brand, category, sizes, variants, updated_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
-         ON CONFLICT (id) DO UPDATE SET
-           name = EXCLUDED.name,
-           brand = EXCLUDED.brand,
-           category = EXCLUDED.category,
-           sizes = EXCLUDED.sizes,
-           variants = EXCLUDED.variants,
-           updated_at = EXCLUDED.updated_at`,
-        [
-          p.id,
-          p.name,
-          p.brand || '',
-          p.category || '',
-          JSON.stringify(p.sizes || []),
-          JSON.stringify(p.variants || []),
-          new Date().toISOString(),
-        ]
-      );
+      await upsertProductRow(client, p);
     }
 
     await client.query('COMMIT');
@@ -125,6 +162,10 @@ function authMiddleware(req, res, next) {
 
 module.exports = {
   readProducts,
+  readProductById,
+  getNextProductId,
+  upsertProduct,
+  deleteProductById,
   writeProducts,
   nextProductId,
   slugify,

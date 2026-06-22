@@ -6,6 +6,10 @@ const fs = require('fs');
 const multer = require('multer');
 const {
   readProducts,
+  readProductById,
+  getNextProductId,
+  upsertProduct,
+  deleteProductById,
   writeProducts,
   createToken,
   verifyToken,
@@ -198,6 +202,56 @@ app.get('/api/admin/products', authMiddleware, asyncHandler(async (_req, res) =>
   res.json(await readProducts());
 }));
 
+app.get('/api/admin/products/next-id', authMiddleware, asyncHandler(async (_req, res) => {
+  res.json({ nextId: await getNextProductId() });
+}));
+
+app.get('/api/admin/products/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'Noto\'g\'ri ID' });
+  }
+  const product = await readProductById(id);
+  if (!product) return res.status(404).json({ error: 'Mahsulot topilmadi' });
+  res.json(product);
+}));
+
+app.post('/api/admin/products', authMiddleware, asyncHandler(async (req, res) => {
+  const product = req.body;
+  if (!product || typeof product !== 'object' || !product.name) {
+    return res.status(400).json({ error: 'Noto\'g\'ri ma\'lumot' });
+  }
+  if (!product.id) {
+    product.id = await getNextProductId();
+  }
+  await upsertProduct(product);
+  res.json(product);
+}));
+
+app.put('/api/admin/products/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'Noto\'g\'ri ID' });
+  }
+  const product = req.body;
+  if (!product || typeof product !== 'object') {
+    return res.status(400).json({ error: 'Noto\'g\'ri ma\'lumot' });
+  }
+  product.id = id;
+  await upsertProduct(product);
+  res.json({ success: true });
+}));
+
+app.delete('/api/admin/products/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'Noto\'g\'ri ID' });
+  }
+  const deleted = await deleteProductById(id);
+  if (!deleted) return res.status(404).json({ error: 'Mahsulot topilmadi' });
+  res.json({ success: true });
+}));
+
 app.put('/api/admin/products', authMiddleware, asyncHandler(async (req, res) => {
   const products = req.body;
   if (!Array.isArray(products)) {
@@ -338,7 +392,7 @@ async function checkServices() {
   }
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`API: http://localhost:${PORT}`);
   console.log(`CORS: ${allowedOrigins.join(', ')}`);
   checkServices();
